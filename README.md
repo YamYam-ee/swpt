@@ -88,7 +88,21 @@ Content search requires at least 3 characters per term (trigram index).
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
 | <kbd>Ctrl</kbd>+<kbd>F</kbd> (in preview) | Find in document — <kbd>Enter</kbd> / <kbd>Shift</kbd>+<kbd>Enter</kbd> for next / previous |
 
-## Getting started
+## Download
+
+<p>
+  <a href="https://github.com/YamYam-ee/swpt/releases/latest/download/swpt-windows-x64.zip">
+    <img alt="Download for Windows" src="https://img.shields.io/badge/Download-swpt%20for%20Windows-0078D6?style=for-the-badge&logo=windows">
+  </a>
+</p>
+
+1. Download **[swpt-windows-x64.zip](https://github.com/YamYam-ee/swpt/releases/latest/download/swpt-windows-x64.zip)**.
+2. Extract it anywhere (e.g. `C:\Tools\swpt`).
+3. Run `swpt.exe`. No installation, no Python needed.
+
+> Windows SmartScreen may warn because the app isn't code-signed. Click **More info → Run anyway**.
+
+## Run from source
 
 **Requirements:** Windows 10 or 11, Python 3.10+.
 
@@ -103,6 +117,15 @@ On first launch swpt offers to index your PC. Everything after that is automatic
 
 > **OCR language pack:** OCR uses the Windows OCR language pack. If it's missing, add it under
 > *Settings → Time & language → Language → (your language) → Language options → Optical character recognition*.
+
+### Build the .exe yourself
+
+```bash
+pip install pyinstaller
+pyinstaller swpt.pyw --name swpt --onedir --windowed --icon swpt.ico --add-data "logo.svg;." --add-data "swpt.ico;." --add-data "logo.png;." --collect-submodules winrt --hidden-import pymupdf
+```
+
+The result ends up in `dist/swpt/`.
 
 ## Privacy
 

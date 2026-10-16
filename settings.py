@@ -32,6 +32,8 @@ def get(cfg, key):
 # ---------------------------------------------------------------- autostart
 
 def _command(hidden):
+    if getattr(sys, "frozen", False):   # byggd som swpt.exe
+        return f'"{sys.executable}"' + (" --background" if hidden else "")
     exe = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     if not os.path.exists(exe):
         exe = sys.executable
