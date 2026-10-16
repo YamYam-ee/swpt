@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A3C42"/>
+      <stop offset="1" stop-color="#16171A"/>
+    </linearGradient>
+    <linearGradient id="sweep" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3D5AFE"/>
+      <stop offset="1" stop-color="#00B8D4"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
+  <rect x="9" y="9" width="238" height="238" rx="55" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="2"/>
+  <!-- svep: fartstreck som drar in i sökglaset -->
+  <g stroke="url(#sweep)" stroke-linecap="round" fill="none">
+    <path d="M44 86 H96" stroke-width="16" opacity="0.6"/>
+    <path d="M30 118 H88" stroke-width="16"/>
+    <path d="M52 150 H96" stroke-width="16" opacity="0.8"/>
+  </g>
+  <!-- sökglas -->
+  <circle cx="146" cy="118" r="44" fill="none" stroke="#FFFFFF" stroke-width="18"/>
+  <path d="M178 150 L212 184" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round"/>
+</svg>
