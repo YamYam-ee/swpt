@@ -13,7 +13,7 @@ import string
 import threading
 import time
 from array import array
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from ctypes import wintypes
 
 import query as Q
@@ -129,6 +129,7 @@ class DiskIndex:
         self.extra = {}                     # gemen sökväg -> [sökväg, namn, är_mapp, storlek, ändrad]
         self._dir_ids = None
         self._dirs_lower = None
+        self.kids = self.kofs = None        # posterna per mapp, se build_children
         self.version = 0                    # ökar vid varje ändring (för att uppdatera sökningar)
 
     @classmethod
@@ -137,7 +138,25 @@ class DiskIndex:
             data = pickle.load(f)
         if data.get("format") != FORMAT:
             raise ValueError("gammalt indexformat")
-        return cls(data)
+        ix = cls(data)
+        ix.build_children()
+        return ix
+
+    def build_children(self):
+        """Posterna grupperade per mapp: kids[kofs[d]:kofs[d + 1]] ligger direkt i mapp d.
+        Så kan en borttagen mapp markeras utan att gå igenom hela indexet. Görs i laddningstråden."""
+        par, nd = self.parent, len(self.dirs)
+        kofs = array("I", bytes(4 * (nd + 1)))
+        for d in par:
+            kofs[d + 1] += 1
+        for d in range(nd):
+            kofs[d + 1] += kofs[d]
+        pos = array("I", kofs)
+        kids = array("I", bytes(4 * self.n))
+        for i, d in enumerate(par):
+            kids[pos[d]] = i
+            pos[d] += 1
+        self.kids, self.kofs = kids, kofs
 
     # --- uppslag
     def lname(self, i):
@@ -247,11 +266,19 @@ class DiskIndex:
     def _remove_tree(self, path):
         prefix = path.lower() + "\\"
         gone = {i for i, d in enumerate(self.dirs_lower()) if d.startswith(prefix) or d == prefix[:-1]}
-        if gone:
-            par, dead = self.parent, self.dead
-            for i in range(self.n):
-                if par[i] in gone:
+        if not gone:
+            return
+        dead = self.dead
+        if self.kids is not None:
+            kids, kofs = self.kids, self.kofs
+            for d in gone:
+                for i in kids[kofs[d]:kofs[d + 1]]:
                     dead[i] = 1
+            return
+        par = self.parent
+        for i in range(self.n):
+            if par[i] in gone:
+                dead[i] = 1
 
     def _remove_extra_tree(self, lp):
         prefix = lp + "\\"
@@ -317,6 +344,14 @@ class Query:
         needle = max(self.name_terms, key=len) if self.name_terms else None
         if needle is None and self.exts and len(self.exts) == 1:
             needle = self.exts[0] + "\n"
+        if needle is None and not (self.exts or self.path_terms):   # allt som inte är borttaget
+            i = 0
+            while i < n:
+                j = dead.find(1, i)
+                j = n if j < 0 else j
+                yield from range(i, j)
+                i = j + 1
+            return
         if needle is None:
             for i in range(n):
                 if not dead[i] and (not (self.exts or self.path_terms)
@@ -353,12 +388,16 @@ class Query:
             if got % 2000 == 0 and time.perf_counter() > end:
                 return got
         self.done = True
-        if self._extras:   # sortera in tilläggen på namn
-            from bisect import insort
-            keyed = [(self.idx.lname(i), i) for i in self.matches]
-            for k, ln in self._extras:
-                insort(keyed, (ln, k))
-            self.matches = [i for _, i in keyed]
+        if self._extras:   # sortera in tilläggen på namn (matches är redan i namnordning)
+            m, lname = self.matches, self.idx.lname
+            places = sorted((bisect_left(m, ln, key=lname), ln, k) for k, ln in self._extras)
+            out, prev = [], 0
+            for p, _, k in places:
+                out += m[prev:p]
+                out.append(k)
+                prev = p
+            out += m[prev:]
+            self.matches = out
             got += len(self._extras)
         return got
 

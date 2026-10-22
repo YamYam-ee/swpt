@@ -847,7 +847,7 @@ class ComputerPage(BasePage):
         self.seen_version = -1
         self.step_timer = QTimer(self, singleShot=True, interval=0)
         self.step_timer.timeout.connect(self._step)
-        self.live_timer = QTimer(self, singleShot=True, interval=500)
+        self.live_timer = QTimer(self, singleShot=True, interval=1500)
         self.live_timer.timeout.connect(self._live_refresh)
         self.start_btn = QPushButton(t("Indexera datorn"))
         self.start_btn.clicked.connect(win.enable_disk_index)
@@ -871,6 +871,7 @@ class ComputerPage(BasePage):
             self.update_info()
             return
         self.q = ix.query(self.edit.text())
+        self.q_started = time.perf_counter()
         self.seen_version = ix.version
         self._content_search()
         self.q.step(0.025)
@@ -897,6 +898,8 @@ class ComputerPage(BasePage):
         self.update_info()
 
     def _finish(self, reset):
+        # Liveuppdateringar högst var 10:e sökningstid, så att de tar högst ~10 % av en kärna.
+        self.live_timer.setInterval(min(30_000, max(1500, int((time.perf_counter() - self.q_started) * 10_000))))
         field, desc = self.sort
         if not self._incremental():
             self.q.sort(field, desc)
@@ -976,10 +979,16 @@ class ComputerPage(BasePage):
             parts.append(self.worker_msg)
         self.info.setText("   ·   ".join(parts))
 
+    def _can_live_refresh(self):
+        """Listan uppdateras bara när den syns och man inte håller på med den."""
+        win = self.win
+        return win.isVisible() and not win.isMinimized() and win.current() is self and self.preview is None \
+            and self.view.verticalScrollBar().value() == 0 and not self.view.selectionModel().hasSelection()
+
     def _live_refresh(self):
         """Visar ändringar på datorn i listan – men aldrig mitt i att man har markerat något."""
-        if self.view.selectionModel().hasSelection() or self.preview is not None \
-                or self.view.verticalScrollBar().value() != 0:
+        ix = self.disk.index
+        if ix is None or ix.version == self.seen_version or not self._can_live_refresh():
             self.update_info()
             return
         self.keeping_selection(self.search)
@@ -989,13 +998,14 @@ class ComputerPage(BasePage):
         if ix is None or self.q is None:
             self.search()
             return
-        if reloaded:
+        if reloaded:   # nytt index (sällan): sök om direkt, så att det gamla kan släppas ur minnet
             self.keeping_selection(self.search)
             return
-        if ix.version != self.seen_version and self.view.verticalScrollBar().value() == 0 \
-                and self.preview is None and self.win.current() is self \
-                and not self.view.selectionModel().hasSelection():
-            self.live_timer.start()
+        # Hela sökningen görs om, så högst en gång per intervall (timern startas inte om) och
+        # aldrig när fönstret är dolt – då görs den i stället när fönstret visas igen.
+        if ix.version != self.seen_version and self._can_live_refresh():
+            if not self.live_timer.isActive():
+                self.live_timer.start()
         else:
             self.update_info()
 
@@ -1413,12 +1423,16 @@ class MainWindow(QMainWindow):
         p = self.current()
         if isinstance(p, FolderPage) and time.time() - p.last_scan > RESCAN_AFTER:
             self.refresh(p)
+        elif p is self.computer:
+            p.on_disk_changed(False)
         self.focus_search()
 
     def on_app_state(self, state):
         p = self.current()
         if state != Qt.ApplicationActive or p is None:
             return
+        if p is self.computer:   # ändringar som kommit medan fönstret var dolt
+            p.on_disk_changed(False)
         if isinstance(p, FolderPage) and time.time() - p.last_scan > RESCAN_AFTER:
             self.refresh(p)
 
