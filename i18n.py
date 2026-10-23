@@ -197,6 +197,23 @@ EN = {
         "Windows text recognition (OCR) is not installed. Add it under Settings → Time & language → "
         "Language → (your language) → Language options → Optical character recognition.",
     "Sluta indexera innehåll i dokument (frigör utrymme)": "Stop indexing document contents (frees space)",
+    # uppdateringar
+    "Uppdateringar": "Updates",
+    "Sök efter nya versioner automatiskt (en gång per dygn)": "Check for new versions automatically (once a day)",
+    "Version {v}": "Version {v}",
+    "Sök efter uppdateringar nu": "Check for updates now",
+    "Du har den senaste versionen av swpt ({v}).": "You have the latest version of swpt ({v}).",
+    "Uppdatera till {v}": "Update to {v}",
+    "Det finns en ny version av swpt. Klicka för att ladda ner och installera den – swpt startar om av sig själv.":
+        "A new version of swpt is available. Click to download and install it – swpt restarts by itself.",
+    "swpt {v} finns. Vill du uppdatera nu? swpt startar om av sig själv.":
+        "swpt {v} is available. Do you want to update now? swpt restarts by itself.",
+    "swpt {v} finns. Öppna swpt och klicka på ”Uppdatera”.": "swpt {v} is available. Open swpt and click “Update”.",
+    "Laddar ner… {p} %": "Downloading… {p} %",
+    "Installerar…": "Installing…",
+    "Uppdateringen kunde inte laddas ner.": "The update could not be downloaded.",
+    "Kunde inte söka efter uppdateringar. Är datorn ansluten till internet?":
+        "Could not check for updates. Is this PC connected to the internet?",
 }
 
 

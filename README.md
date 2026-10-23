@@ -14,6 +14,7 @@
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white">
   <img alt="Qt" src="https://img.shields.io/badge/UI-PySide6%20(Qt%206)-41CD52?logo=qt&logoColor=white">
   <img alt="Local only" src="https://img.shields.io/badge/data-100%25%20local-success">
+  <a href="https://github.com/YamYam-ee/swpt/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/YamYam-ee/swpt?color=00B8D4"></a>
 </p>
 
 ---
@@ -63,6 +64,11 @@ Windows Search is slow and unpredictable. Third-party tools find file names but 
 - Single-instance: launching again just brings the existing window to front.
 - Drag results straight into Explorer, Outlook, Teams…
 
+### Always up to date
+- swpt checks for a new version **once a day** and shows an **Update to x.y.z** button when one is out.
+- One click downloads it, **verifies its SHA-256 checksum**, installs it and restarts swpt — no need to visit GitHub.
+- Per-user install: no administrator rights, no UAC prompt. Turn the check off in *Settings → Updates*.
+
 ## Search syntax
 
 | Query | Matches |
@@ -91,14 +97,14 @@ Content search requires at least 3 characters per term (trigram index).
 ## Download
 
 <p>
-  <a href="https://github.com/YamYam-ee/swpt/releases/latest/download/swpt-windows-x64.zip">
-    <img alt="Download for Windows" src="https://img.shields.io/badge/Download-swpt%20for%20Windows-0078D6?style=for-the-badge&logo=windows">
+  <a href="https://github.com/YamYam-ee/swpt/releases/latest/download/swpt-setup-x64.msi">
+    <img alt="Download installer" src="https://img.shields.io/badge/Download-Installer%20(.msi)-0078D6?style=for-the-badge&logo=windows">
   </a>
 </p>
 
-1. Download **[swpt-windows-x64.zip](https://github.com/YamYam-ee/swpt/releases/latest/download/swpt-windows-x64.zip)**.
-2. Extract it anywhere (e.g. `C:\Tools\swpt`).
-3. Run `swpt.exe`. No installation, no Python needed.
+**Installer (recommended):** download **[swpt-setup-x64.msi](https://github.com/YamYam-ee/swpt/releases/latest/download/swpt-setup-x64.msi)** and run it. swpt installs for your user account in `%LOCALAPPDATA%\Programs\swpt`, adds a Start menu shortcut and starts. No administrator rights needed, and future updates install from inside the app. Uninstall under *Settings → Apps → Installed apps*.
+
+**Portable:** prefer no installation? Download **[swpt-windows-x64.zip](https://github.com/YamYam-ee/swpt/releases/latest/download/swpt-windows-x64.zip)**, extract it anywhere and run `swpt.exe`. Updates then go through the installer.
 
 > Windows SmartScreen may warn because the app isn't code-signed. Click **More info → Run anyway**.
 
@@ -118,18 +124,27 @@ On first launch swpt offers to index your PC. Everything after that is automatic
 > **OCR language pack:** OCR uses the Windows OCR language pack. If it's missing, add it under
 > *Settings → Time & language → Language → (your language) → Language options → Optical character recognition*.
 
-### Build the .exe yourself
+### Build the exe and installer yourself
 
 ```bash
 pip install pyinstaller
-pyinstaller swpt.pyw --name swpt --onedir --windowed --icon swpt.ico --add-data "logo.svg;." --add-data "swpt.ico;." --add-data "logo.png;." --collect-submodules winrt --hidden-import pymupdf
+dotnet tool install --global wix --version 5.0.2
+powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-The result ends up in `dist/swpt/`.
+`dist/` then contains `swpt-windows-x64.zip` and `swpt-setup-x64.msi`.
+
+### Releasing a new version
+
+1. Bump `VERSION` in `version.py` and add a section to `CHANGELOG.md`.
+2. Commit, then tag and push: `git tag v1.2.0 && git push origin main v1.2.0`.
+3. GitHub Actions builds the exe, zip and MSI and publishes the release with the changelog as notes. Installed copies pick it up within a day.
 
 ## Privacy
 
-swpt is **100% local**. It makes no network requests. The index (`index.db`) and settings (`config.json`) are stored in `%LOCALAPPDATA%\swpt` and never leave your computer. Turning off indexing deletes the index.
+swpt is **100% local**. Your files, the index (`index.db`) and settings (`config.json`) are stored in `%LOCALAPPDATA%\swpt` and never leave your computer. Turning off indexing deletes the index.
+
+The only network request swpt makes is the once-a-day update check, which asks the GitHub API for the latest release. Nothing about your PC or your files is sent. You can turn it off in *Settings → Updates*.
 
 ## Languages
 
@@ -147,7 +162,11 @@ The UI is available in **English** and **Swedish** and follows your Windows disp
 | `preview.py` | Quick-preview window (PDF/image viewer + Windows preview handlers) |
 | `query.py` | Search query parsing (quoted = exact whole-word) |
 | `store.py` | Config and SQLite/FTS5 database |
-| `settings.py` | Settings dialog: hotkey, autostart, tray, language, indexing |
+| `settings.py` | Settings dialog: hotkey, autostart, tray, language, indexing, updates |
+| `updater.py` | Checks GitHub for new releases, downloads and installs the MSI |
+| `version.py` | The app version (must match the release tag) |
+| `installer/swpt.wxs` | MSI installer definition (WiX 5) |
+| `build.ps1` | Builds the exe, zip and MSI |
 | `i18n.py` | Translations (Swedish ↔ English) |
 | `make_icon.py` | Builds `swpt.ico` and `logo.png` from `logo.svg` |
 

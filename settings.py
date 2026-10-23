@@ -11,6 +11,7 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout,
                                QKeySequenceEdit, QLabel, QPushButton, QVBoxLayout)
 
+import updater
 from i18n import fmt_int, t
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -22,6 +23,7 @@ DEFAULTS = {
     "tray": True,           # fortsätt köra i systemfältet när fönstret stängs
     "start_hidden": True,   # vid autostart: starta dolt i systemfältet
     "language": "auto",     # auto / sv / en
+    "check_updates": True,  # fråga GitHub en gång per dygn om det finns en ny version
 }
 
 
@@ -213,6 +215,23 @@ class SettingsDialog(QDialog):
         self._show_index_status()
         lay.addWidget(box)
 
+        # uppdateringar
+        box = QGroupBox(t("Uppdateringar"))
+        bl = QVBoxLayout(box)
+        self.check_updates = QCheckBox(t("Sök efter nya versioner automatiskt (en gång per dygn)"))
+        self.check_updates.setChecked(get(cfg, "check_updates"))
+        version = QLabel(t("Version {v}", v=updater.current()))
+        version.setStyleSheet("color: gray;")
+        check_now = QPushButton(t("Sök efter uppdateringar nu"))
+        check_now.clicked.connect(lambda: win.check_updates(manual=True))
+        check_now.setEnabled(updater.supported())
+        row = QHBoxLayout()
+        row.addWidget(version, 1)
+        row.addWidget(check_now)
+        bl.addWidget(self.check_updates)
+        bl.addLayout(row)
+        lay.addWidget(box)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText(t("Spara"))
         buttons.button(QDialogButtonBox.Cancel).setText(t("Avbryt"))
@@ -244,6 +263,7 @@ class SettingsDialog(QDialog):
         s["tray"] = self.tray.isChecked()
         s["start_hidden"] = self.start_hidden.isChecked()
         s["language"] = self.lang.currentData()
+        s["check_updates"] = self.check_updates.isChecked()
         try:
             set_autostart(self.autostart.isChecked(), self.start_hidden.isChecked())
         except OSError:

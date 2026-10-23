@@ -33,6 +33,7 @@ import ocr
 import query as Q
 import store
 import settings
+import updater
 from i18n import fmt_dec, fmt_int, t
 from preview import PreviewDialog
 
@@ -1107,6 +1108,32 @@ class FolderPage(BasePage):
         self.search()
 
 
+# ---------------------------------------------------------------- uppdateringar
+
+class Updater(QObject):
+    """Söker efter nya versioner och laddar ner dem i bakgrunden (se updater.py)."""
+    found = Signal(object)          # info om en nyare version, eller None
+    progress = Signal(float)        # 0–1
+    downloaded = Signal(str)        # sökväg till MSI:n
+    failed = Signal(str)
+
+    def check(self):
+        def run():
+            try:
+                self.found.emit(updater.check())
+            except Exception as e:
+                self.failed.emit(str(e))
+        threading.Thread(target=run, daemon=True).start()
+
+    def download(self, info):
+        def run():
+            try:
+                self.downloaded.emit(updater.download(info, self.progress.emit))
+            except Exception as e:
+                self.failed.emit(str(e))
+        threading.Thread(target=run, daemon=True).start()
+
+
 # ---------------------------------------------------------------- huvudfönster
 
 def _wordmatch(text, pattern):
@@ -1210,7 +1237,13 @@ class MainWindow(QMainWindow):
         self.worker.indexed.connect(self.on_indexed)
         self.disk = DiskManager(self)
 
-        self.tabs = TabHost(brand_label(), corner_buttons(self.add_tab, self.open_settings))
+        corner = corner_buttons(self.add_tab, self.open_settings)
+        self.update_btn = QToolButton(objectName="update")
+        self.update_btn.setCursor(Qt.PointingHandCursor)
+        self.update_btn.clicked.connect(self.start_update)
+        self.update_btn.hide()
+        corner.layout().insertWidget(0, self.update_btn)
+        self.tabs = TabHost(brand_label(), corner)
         bar = self.tabs.tabBar()
         bar.setContextMenuPolicy(Qt.CustomContextMenu)
         bar.customContextMenuRequested.connect(self.tab_menu)
@@ -1265,6 +1298,19 @@ class MainWindow(QMainWindow):
         self.tray = None
         self._quitting = False
         self.apply_settings()
+
+        self.update_info, self._updating, self._manual_check = None, False, False
+        self.updates = Updater(self)
+        self.updates.found.connect(self.on_update_found)
+        self.updates.progress.connect(
+            lambda f: self.update_btn.setText(t("Laddar ner… {p} %", p=int(f * 100))))
+        self.updates.downloaded.connect(self.on_update_downloaded)
+        self.updates.failed.connect(self.on_update_failed)
+        self.update_timer = QTimer(self, interval=updater.CHECK_EVERY)
+        self.update_timer.timeout.connect(self.check_updates)
+        if updater.supported():
+            QTimer.singleShot(20_000, self.check_updates)
+            self.update_timer.start()
 
     # --- hjälpare
     def current(self):
@@ -1570,6 +1616,63 @@ class MainWindow(QMainWindow):
         self.close()
         QApplication.instance().quit()
 
+    # --- uppdateringar
+    def check_updates(self, manual=False):
+        if self._updating or not (manual or settings.get(self.cfg, "check_updates")):
+            return
+        self._manual_check = manual
+        self.updates.check()
+
+    def on_update_found(self, info):
+        manual, self._manual_check = self._manual_check, False
+        self.update_info = info
+        if info is None:
+            self.update_btn.hide()
+            if manual:
+                QMessageBox.information(self, t("Uppdateringar"),
+                                        t("Du har den senaste versionen av swpt ({v}).", v=updater.current()))
+            return
+        self.update_btn.setText(t("Uppdatera till {v}", v=info["version"]))
+        self.update_btn.setToolTip(t("Det finns en ny version av swpt. Klicka för att ladda ner och installera "
+                                     "den – swpt startar om av sig själv."))
+        self.update_btn.setEnabled(True)
+        self.update_btn.show()
+        if manual:
+            if QMessageBox.question(self, t("Uppdateringar"),
+                                    t("swpt {v} finns. Vill du uppdatera nu? swpt startar om av sig själv.",
+                                      v=info["version"])) == QMessageBox.Yes:
+                self.start_update()
+        elif self.tray and self.cfg.get("update_notified") != info["version"]:
+            self.cfg["update_notified"] = info["version"]
+            self.save()
+            self.tray.showMessage("swpt", t("swpt {v} finns. Öppna swpt och klicka på ”Uppdatera”.",
+                                            v=info["version"]), app_icon(), 6000)
+
+    def start_update(self):
+        if not self.update_info or self._updating:
+            return
+        self._updating = True
+        self.update_btn.setEnabled(False)
+        self.update_btn.setText(t("Laddar ner… {p} %", p=0))
+        self.updates.download(self.update_info)
+
+    def on_update_downloaded(self, msi):
+        self.update_btn.setText(t("Installerar…"))
+        updater.install(msi)      # väntar tills swpt har avslutats
+        self.quit_app()
+
+    def on_update_failed(self, err):
+        if self._updating:
+            self._updating = False
+            self.update_btn.setEnabled(True)
+            self.update_btn.setText(t("Uppdatera till {v}", v=self.update_info["version"]))
+            QMessageBox.warning(self, t("Uppdateringar"), t("Uppdateringen kunde inte laddas ner.") + f"\n\n{err}")
+        elif self._manual_check:
+            self._manual_check = False
+            QMessageBox.warning(self, t("Uppdateringar"),
+                                t("Kunde inte söka efter uppdateringar. Är datorn ansluten till internet?")
+                                + f"\n\n{err}")
+
     # --- index över hela datorn
     def first_run(self):
         """Första start: fråga om datorn ska indexeras."""
@@ -1733,6 +1836,17 @@ CORNER_STYLE = """
     QToolButton#settings { padding: 4px 7px; }
     QToolButton#newTab:hover, QToolButton#settings:hover { background: rgba(0, 184, 212, 0.14); border-color: #00B8D4; }
     QToolButton#newTab:pressed, QToolButton#settings:pressed { background: rgba(0, 184, 212, 0.28); }
+    QToolButton#update {
+        border: 1px solid #00B8D4;
+        border-radius: 8px;
+        background: #00B8D4;
+        color: white;
+        font-weight: 600;
+        min-height: 26px;
+        padding: 4px 12px;
+    }
+    QToolButton#update:hover { background: #00A3BD; }
+    QToolButton#update:disabled { background: rgba(0, 184, 212, 0.55); color: white; }
 """
 
 

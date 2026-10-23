@@ -1,0 +1,60 @@
+<!--
+  MSI-installerare för swpt (WiX 5). Installeras per användare i %LOCALAPPDATA%\Programs\swpt,
+  så den kräver inte administratörsbehörighet och kan uppdateras tyst inifrån appen.
+
+  Bygg (efter PyInstaller):
+    wix build installer\swpt.wxs -arch x64 -d Version=1.1.0 -bindpath app=dist\swpt -o swpt-setup-x64.msi
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="swpt"
+           Manufacturer="YamYam-ee"
+           Version="$(Version)"
+           UpgradeCode="D0E00816-59CF-42A9-A566-DF63E8DB12F0"
+           Scope="perUser"
+           Compressed="yes">
+    <SummaryInformation Description="swpt – instant local search for Windows" />
+
+    <!-- Nyare versioner ersätter äldre; samma version går att installera om. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of swpt is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="swpt.ico" SourceFile="!(bindpath.app)swpt.exe" />
+    <Property Id="ARPPRODUCTICON" Value="swpt.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/YamYam-ee/swpt" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/YamYam-ee/swpt/issues" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="swpt" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="Main">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <!-- Hela PyInstaller-mappen. -->
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="!(bindpath.app)**" />
+    </ComponentGroup>
+
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder" Guid="*">
+      <Shortcut Id="swptShortcut" Name="swpt" Description="Instant local search for Windows"
+                Target="[INSTALLFOLDER]swpt.exe" WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="CleanInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\swpt" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!-- Starta swpt när installationen är klar – bara när man själv dubbelklickat på MSI:n.
+         Vid uppdatering inifrån appen startar uppdateraren swpt i stället. -->
+    <CustomAction Id="LaunchApp" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]swpt.exe&quot;"
+                  Return="asyncNoWait" Impersonate="yes" />
+    <InstallExecuteSequence>
+      <Custom Action="LaunchApp" After="InstallFinalize" Condition="UILevel = 5 AND NOT (REMOVE ~= &quot;ALL&quot;)" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>
