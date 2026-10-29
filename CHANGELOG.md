@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.0] – 2026-10-29
+
+### Featherweight: ~90% less memory
+
+swpt used to sit at around 800 MB of RAM (with peaks of 1.5 GB) on a PC with 2 million files. It now uses **about 90 MB while open and about 25 MB while waiting in the tray**.
+
+- 🪶 **Memory-mapped index.** The file-name index is read straight from disk by Windows instead of being copied into the app's own memory. Windows keeps only the parts in use and can drop them at any time.
+- 🔤 **Compact UTF-8 names.** A single emoji in one file name used to make Python store *all* 2 million names at 4 bytes per character (410 MB). Names are now stored as UTF-8.
+- 📉 **No more daily 500 MB spike** when the index is refreshed: the new index is simply mapped next to the old one.
+- 🧮 **Compact result lists** (~9× smaller) and folder lookups straight from the index file.
+- 💤 **Tray mode gives memory back.** After a minute hidden, swpt releases its result list and returns its memory to Windows. Bringing it back and searching still takes well under 0.1 s.
+- 🏗️ **Lighter index rebuilds:** the background rebuild now runs once a day (changes are tracked live anyway) and peaks at about half the memory it used to.
+- 🧹 Content-indexing helper processes now exit when they're done instead of staying in memory.
+
+Your existing index is converted automatically the first time 1.2.0 starts.
+
 ## [1.1.0] – 2026-10-23
 
 ### Installer and automatic updates 🎉

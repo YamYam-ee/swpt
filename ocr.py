@@ -3,7 +3,7 @@
 Körs i hjälpprocesser. Sidor i en PDF som redan har text används som de är; bara sidor utan
 text (inskannade) och bildfiler tolkas.
 """
-import asyncio
+
 import os
 import threading
 
@@ -64,6 +64,7 @@ def page_words(page, is_image=False):
         return []
     gray, w, h = _page_image(page, is_image)
     zx, zy = w / max(page.rect.width, 1), h / max(page.rect.height, 1)
+    import asyncio   # bara i hjälpprocesserna – sparar minne i appen
     result = asyncio.run(_recognize_result(gray, w, h))
     out = []
     for line_no, line in enumerate(result.lines):
@@ -111,6 +112,7 @@ def ocr_file(path):
                     parts.append(text)
                     continue
                 gray, w, h = _page_image(page, is_image)
+                import asyncio
                 parts.append(asyncio.run(_recognize(gray, w, h)))
                 did_ocr = True
     except Exception:

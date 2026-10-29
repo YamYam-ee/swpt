@@ -1,6 +1,7 @@
 """swpt – snabb sökning i hela datorn (eget index) och i sparade mappflikar, med förhandsvisning."""
 import ctypes
 import ctypes.wintypes
+import gc
 import multiprocessing
 import os
 import queue
@@ -94,6 +95,9 @@ class Worker(QObject):
             except Exception as e:  # visa felet i fliken i stället för att tråden dör
                 self.con.rollback()
                 self.status.emit(tab_id, t("Fel: {e}", e=e))
+            if self._pool is not None and self._q.empty():
+                self._pool.shutdown(wait=False)   # hjälpprocesserna tar minne – starta nya vid behov
+                self._pool = None
 
     def _scan_docs(self, tab_id, root):
         """Som _scan, men sparar bara dokument som går att söka i (för innehållssök i hela datorn)."""
@@ -675,8 +679,9 @@ class DiskManager(QObject):
     uppdaterat med Windows ändringsnotiser. Bygger om i bakgrunden när det blivit gammalt."""
     changed = Signal(bool)          # True = ett nytt index har laddats
     _loaded = Signal(object, str)
-    REBUILD_AFTER = 30 * 60         # sekunder: indexet byggs om i bakgrunden vid start om det är äldre
-    REBUILD_EVERY = 6 * 3600 * 1000
+    REBUILD_AFTER = 6 * 3600        # sekunder: indexet byggs om i bakgrunden vid start om det är äldre
+    REBUILD_EVERY = 24 * 3600 * 1000  # ändringar fångas live, så en full genomgång per dygn räcker
+    MAX_EXTRA = 50_000              # så många tillagda filer i minnet – sedan byggs indexet om
 
     def __init__(self, win):
         super().__init__(win)
@@ -688,7 +693,7 @@ class DiskManager(QObject):
         self.building = self.quiet = False
         self.capturing = False      # samla ändringar tills nästa index är laddat
         self.captured = []
-        self.path = str(store.APP_DIR / "diskindex.bin")
+        self.dir = str(store.APP_DIR)
         self._loaded.connect(self._on_loaded)
         self.poll = QTimer(self, interval=250)
         self.poll.timeout.connect(self._poll_build)
@@ -706,7 +711,8 @@ class DiskManager(QObject):
             return
         self._start_watcher()
         self.periodic.start()
-        if os.path.exists(self.path):
+        diskindex.cleanup(self.dir, keep=diskindex.latest(self.dir) or os.path.join(self.dir, "diskindex.bin"))
+        if diskindex.latest(self.dir) or os.path.exists(os.path.join(self.dir, "diskindex.bin")):
             self.status = t("Laddar index…")
             self._load()
         else:
@@ -723,7 +729,10 @@ class DiskManager(QObject):
 
         def run():
             try:
-                self._loaded.emit(diskindex.DiskIndex.load(self.path), "")
+                path = diskindex.latest(self.dir) or diskindex.convert_legacy(self.dir)
+                if path is None:
+                    raise FileNotFoundError("inget index")
+                self._loaded.emit(diskindex.DiskIndex.load(path), "")
             except Exception as e:
                 self._loaded.emit(None, str(e))
         threading.Thread(target=run, daemon=True).start()
@@ -740,6 +749,8 @@ class DiskManager(QObject):
         self.index = ix
         self.status = t("Uppdaterar indexet i bakgrunden…") if self.building else ""
         self.changed.emit(True)
+        # det gamla indexet släpps när sökningarna har bytts ut – sedan kan dess fil tas bort
+        QTimer.singleShot(10_000, lambda: self.index is not None and diskindex.cleanup(self.dir, keep=self.index.file))
         if not self.building and time.time() - ix.created > self.REBUILD_AFTER:
             self.rebuild(quiet=True)
 
@@ -748,7 +759,8 @@ class DiskManager(QObject):
             return
         ctx = multiprocessing.get_context("spawn")
         self.progress = ctx.Queue()
-        self.proc = ctx.Process(target=diskindex.build_index, args=(self.path, self.progress, [str(store.APP_DIR)]),
+        self.proc = ctx.Process(target=diskindex.build_index,
+                                args=(diskindex.new_path(self.dir), self.progress, [str(store.APP_DIR)]),
                                 daemon=True)
         self.proc.start()
         self.building, self.quiet = True, quiet and self.index is not None
@@ -805,6 +817,8 @@ class DiskManager(QObject):
         if self.index is not None:
             for d in self._apply(self.index, events):
                 self.index.add_tree(d)
+            if len(self.index.extra) > self.MAX_EXTRA:
+                self.rebuild(quiet=True)
             self.changed.emit(False)
 
     def disable(self):
@@ -813,11 +827,8 @@ class DiskManager(QObject):
         self.index = None
         self.status = ""
         self.win.cfg["disk_index"] = "no"
-        try:
-            os.remove(self.path)
-        except OSError:
-            pass
         self.changed.emit(True)
+        QTimer.singleShot(2000, lambda: diskindex.cleanup(self.dir))
 
     def stop(self):
         self.drain.stop()
@@ -923,7 +934,7 @@ class ComputerPage(BasePage):
             self.hits[path.lower()] = fid
             folder = path[:len(path) - len(name) - 1]
             name_l, folder_l = name.lower(), folder.lower()
-            if q._ok(name_l, folder_l):
+            if q.ok_str(name_l, folder_l):
                 continue   # finns redan bland namnträffarna
             if q.exts and not name_l.endswith(tuple(q.exts)):
                 continue
@@ -1294,6 +1305,10 @@ class MainWindow(QMainWindow):
         self.poll.timeout.connect(lambda: isinstance(self.current(), FolderPage) and self.refresh(self.current()))
         self.poll.start()
         QGuiApplication.instance().applicationStateChanged.connect(self.on_app_state)
+        self.hidden_ticks = 0
+        self.idle_check = QTimer(self, interval=30_000)
+        self.idle_check.timeout.connect(self._idle_check)
+        self.idle_check.start()
 
         self.tray = None
         self._quitting = False
@@ -1472,6 +1487,29 @@ class MainWindow(QMainWindow):
         elif p is self.computer:
             p.on_disk_changed(False)
         self.focus_search()
+
+    def _idle_check(self):
+        """Dold i systemfältet eller minimerad: släpp sökresultaten efter en minut och lämna tillbaka
+        minnet till Windows (igen var 30:e minut). Allt läses in igen när fönstret visas."""
+        if self.isVisible() and not self.isMinimized():
+            self.hidden_ticks = 0
+            return
+        self.hidden_ticks += 1
+        if self.hidden_ticks % 60 != 2:
+            return
+        c = self.computer
+        if c.q is not None:
+            c.step_timer.stop()
+            c.q, c.extra = None, []
+            c.model.set_results([], sort=False)
+        gc.collect()
+        try:
+            k32 = ctypes.windll.kernel32
+            k32.GetCurrentProcess.restype = ctypes.wintypes.HANDLE
+            k32.SetProcessWorkingSetSize.argtypes = [ctypes.wintypes.HANDLE, ctypes.c_size_t, ctypes.c_size_t]
+            k32.SetProcessWorkingSetSize(k32.GetCurrentProcess(), ctypes.c_size_t(-1), ctypes.c_size_t(-1))
+        except Exception:
+            pass
 
     def on_app_state(self, state):
         p = self.current()

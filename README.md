@@ -37,8 +37,9 @@ Windows Search is slow and unpredictable. Third-party tools find file names but 
 
 ### Whole-PC file name search
 - swpt builds **its own index** of every file name on all fixed drives — no dependency on any other program.
-- The index is built in a separate **low-priority background process** (below-normal CPU *and* disk priority), takes about a minute and you can keep working meanwhile.
-- All names live in memory as one long lowercase string, so a search is a single native `str.find` sweep — **instant even across millions of files**.
+- The index is built in a separate **low-priority background process** (below-normal CPU *and* disk priority), takes about 30 seconds and you can keep working meanwhile.
+- All names are stored as one long lowercase UTF-8 string in a **memory-mapped index file**, so a search is a single native `find` sweep — **instant even across millions of files**.
+- **Featherweight:** the index is read straight from disk by Windows instead of being copied into the app, so swpt uses about **90 MB with 2 million files indexed** — and around **25 MB while it waits in the tray**.
 - Changes are picked up **live** via `ReadDirectoryChangesW` and layered on top of the index, so new, renamed and deleted files show up immediately.
 
 ### Full-text content search
