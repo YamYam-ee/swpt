@@ -82,6 +82,7 @@ class Worker(QObject):
             self._pool.shutdown(wait=False, cancel_futures=True)
 
     def _run(self):
+        diskindex.background_thread()
         self.con = store.connect()
         while True:
             job = self._q.get()
@@ -260,6 +261,15 @@ def human_size(n):
         n /= 1024
 
 
+# Qt-konstanter som vanliga tal: data() anropas tusentals gånger per ommålning, och att slå upp
+# Qt.DisplayRole osv. i PySide6 vid varje anrop kostar mer än resten av funktionen.
+DISPLAY, DECORATION, TOOLTIP, ALIGNMENT, FOREGROUND = (int(r) for r in (
+    Qt.DisplayRole, Qt.DecorationRole, Qt.ToolTipRole, Qt.TextAlignmentRole, Qt.ForegroundRole))
+USED_ROLES = frozenset((DISPLAY, DECORATION, TOOLTIP, ALIGNMENT, FOREGROUND))
+ALIGN_RIGHT = int((Qt.AlignRight | Qt.AlignVCenter).value)
+ITEM_FLAGS = Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemNeverHasChildren | Qt.ItemIsDragEnabled
+
+
 class ResultModel(QAbstractTableModel):
     HEADERS = [t("Namn"), t("Mapp"), t("Träff i innehåll"), t("Ändrad"), t("Storlek")]
 
@@ -294,10 +304,12 @@ class ResultModel(QAbstractTableModel):
             self.snips[fid] = s
         return s
 
-    def data(self, index, role=Qt.DisplayRole):
+    def data(self, index, role=DISPLAY):
+        if role not in USED_ROLES:
+            return None
         r = self.rows[index.row()]
         c = index.column()
-        if role == Qt.DisplayRole:
+        if role == DISPLAY:
             if c == 0:
                 return r[NAME]
             if c == 1:
@@ -309,16 +321,16 @@ class ResultModel(QAbstractTableModel):
                 return datetime.fromtimestamp(r[MTIME]).strftime("%Y-%m-%d %H:%M") if r[MTIME] > 0 else ""
             if c == 4:
                 return "" if r[IS_DIR] or r[SIZE] < 0 else human_size(r[SIZE])
-        elif role == Qt.DecorationRole and c == 0:
+        elif role == DECORATION and c == 0:
             return self._icon(r)
-        elif role == Qt.ToolTipRole:
+        elif role == TOOLTIP:
             if c == 2 and self.hits and r[PATH].lower() in self.hits:
                 return self._snippet(self.hits[r[PATH].lower()])
             return r[PATH] + ("\n" + t("Finns bara i molnet – söks inte i innehållet") if r[CLOUD] else "")
-        elif role == Qt.ForegroundRole and r[CLOUD]:
+        elif role == FOREGROUND and r[CLOUD]:
             return self.grey
-        elif role == Qt.TextAlignmentRole and c == 4:
-            return int(Qt.AlignRight | Qt.AlignVCenter)
+        elif role == ALIGNMENT and c == 4:
+            return ALIGN_RIGHT
 
     def _icon(self, r):
         if r[IS_DIR]:
@@ -330,7 +342,7 @@ class ResultModel(QAbstractTableModel):
         return icon
 
     def flags(self, index):
-        return super().flags(index) | Qt.ItemIsDragEnabled
+        return ITEM_FLAGS
 
     def mimeTypes(self):
         return ["text/uri-list"]
@@ -559,7 +571,7 @@ class BasePage(QWidget):
         fn()
         if paths or cur_path:
             rows = self.model.rows
-            for r in range(min(len(rows), 50000)):
+            for r in range(min(len(rows), 5000)):
                 p = rows[r][PATH]
                 if p in paths:
                     sm.select(self.model.index(r, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
@@ -794,11 +806,11 @@ class DiskManager(QObject):
 
     def _apply(self, ix, events):
         rescans, overflow = [], False
-        for action, path in events:
-            if action == "overflow":
+        for ev in events:   # (åtgärd, sökväg, info) eller ("overflow", enhet)
+            if ev[0] == "overflow":
                 overflow = True
             else:
-                rescans += ix.apply(action, path)
+                rescans += ix.apply(*ev)
         if overflow:
             QTimer.singleShot(0, lambda: self.rebuild(quiet=True))
         return rescans[:50]
@@ -886,7 +898,7 @@ class ComputerPage(BasePage):
         self.q_started = time.perf_counter()
         self.seen_version = ix.version
         self._content_search()
-        self.q.step(0.025)
+        self.q.step(0.006)
         if self.q.done:
             self._finish(reset=True)
         else:
@@ -900,7 +912,7 @@ class ComputerPage(BasePage):
         q = self.q
         if q is None:
             return
-        q.step(0.03)
+        q.step(0.006)
         if q.done:
             self._finish(reset=bool(q._extras) or not self._incremental())
         else:
@@ -1989,6 +2001,9 @@ def brand_label():
 
 
 def main():
+    # Bakgrundstrådarna lämnar över till gränssnittet var 1 ms i stället för var 5:e, så att
+    # fönstret inte hackar när det flyttas eller ritas om medan något görs i bakgrunden.
+    sys.setswitchinterval(0.001)
     try:  # egen ikon i aktivitetsfältet i stället för Pythons
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("swpt.search")
     except Exception:

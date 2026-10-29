@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.1] – 2026-10-29
+
+### Smooth: no more stutter when moving the window or switching tabs
+
+Measured with a frame-drop detector (UI thread blocked > 20 ms) while dragging the window and cycling tabs: from up to 50 hitches of 50–60 ms in 20 seconds down to **none**.
+
+- 🎨 **4× faster table drawing.** Looking up Qt constants on every cell request made each repaint cost ~30 ms; tab switches are now 12–22 ms instead of 20–40 ms.
+- ⏱️ **Searches and live updates work in ~6 ms slices** and always check the clock, even while skipping many non-matching names, so the window keeps moving smoothly.
+- 💾 **File-change details are read on the watcher threads**, so the UI never waits for the disk (OneDrive files can be slow to query).
+- 🧵 **Background threads yield to the UI** every millisecond and run at lower priority.
+
 ## [1.2.0] – 2026-10-29
 
 ### Featherweight: ~90% less memory

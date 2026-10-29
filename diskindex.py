@@ -25,6 +25,27 @@ import query as Q
 
 MAGIC = b"SWPTIX2\0"
 _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_k32.GetCurrentThread.restype = wintypes.HANDLE
+_k32.SetThreadPriority.argtypes = [wintypes.HANDLE, ctypes.c_int]
+
+
+def background_thread():
+    """Lägre prioritet för den anropande tråden, så att gränssnittet går före."""
+    try:
+        _k32.SetThreadPriority(_k32.GetCurrentThread(), -1)   # THREAD_PRIORITY_BELOW_NORMAL
+    except Exception:
+        pass
+
+
+def file_info(path):
+    """(är_mapp, storlek, ändrad) för en sökväg, eller False om den inte finns. Görs i Watchers
+    trådar, så att gränssnittet aldrig väntar på disken (OneDrive-filer kan vara långsamma)."""
+    try:
+        st = os.stat(path, follow_symlinks=False)
+    except OSError:
+        return False
+    is_dir = os.path.isdir(path) and not os.path.islink(path)
+    return is_dir, -1 if is_dir else st.st_size, st.st_mtime
 
 
 def fixed_drives():
@@ -333,8 +354,9 @@ class DiskIndex:
         return -1
 
     # --- ändringar från Watcher
-    def apply(self, action, path):
-        """action: 'add', 'remove' eller 'modify'. Returnerar mappar som behöver läsas in."""
+    def apply(self, action, path, info=None):
+        """action: 'add', 'remove' eller 'modify'; info från file_info (hämtas här om den saknas).
+        Returnerar mappar som behöver läsas in."""
         lp = path.lower()
         rescan = []
         if action == "remove":
@@ -347,23 +369,22 @@ class DiskIndex:
                     self._remove_tree(path)
             self._remove_extra_tree(lp)
         else:
-            try:
-                st = os.stat(path, follow_symlinks=False)
-            except OSError:
+            if info is None:
+                info = file_info(path)
+            if not info:
                 return rescan
-            is_dir = os.path.isdir(path) and not os.path.islink(path)
-            sz = -1 if is_dir else st.st_size
+            is_dir, sz, mtime = info
             i = self.find(path)
             if i >= 0 and not self.dead[i]:
-                self.changed[i] = (sz, st.st_mtime)
+                self.changed[i] = (sz, mtime)
             elif lp in self.extra:
-                self.extra[lp][3:5] = [sz, st.st_mtime]
+                self.extra[lp][3:5] = [sz, mtime]
             elif action == "add":
                 if i >= 0:
                     self.dead[i] = 0
-                    self.changed[i] = (sz, st.st_mtime)
+                    self.changed[i] = (sz, mtime)
                 else:
-                    self.extra[lp] = [path, os.path.basename(path), is_dir, sz, st.st_mtime]
+                    self.extra[lp] = [path, os.path.basename(path), is_dir, sz, mtime]
                 if is_dir:
                     rescan.append(path)
         self.version += 1
@@ -505,21 +526,26 @@ class Query:
             return
         if needle is None and len(self._bexts) == 1:
             needle = self._bexts[0] + b"\n"
+        # None = paus utan träff, så att step() kan titta på klockan även när inget matchar
         if needle is None:
             for i in range(n):
                 if not dead[i] and self._ok(big[lofs[i]:lofs[i + 1] - 1], dl(par[i]) if dl else b""):
                     yield i
+                elif not i & 255:
+                    yield None
             return
         pos = big.find(needle)
-        last = -1
+        last, checked = -1, 0
         while pos >= 0:
-            i = bisect_right(lofs, pos) - 1
+            i = bisect_right(lofs, pos, last + 1) - 1
             if i != last:
                 last = i
-                if not dead[i]:
-                    ln = big[lofs[i]:lofs[i + 1] - 1]
-                    if self._ok(ln, dl(par[i]) if dl else b""):
-                        yield i
+                if not dead[i] and self._ok(big[lofs[i]:lofs[i + 1] - 1], dl(par[i]) if dl else b""):
+                    yield i
+                else:
+                    checked += 1
+                    if not checked & 255:
+                        yield None
             pos = big.find(needle, lofs[i + 1])
 
     def _extra_matches(self):
@@ -535,9 +561,12 @@ class Query:
         end = time.perf_counter() + budget_s
         got, append, gen = 0, self.matches.append, self._gen
         for i in gen:
-            append(i)
-            got += 1
-            if got % 2000 == 0 and time.perf_counter() > end:
+            if i is not None:
+                append(i)
+                got += 1
+                if got & 255:
+                    continue
+            if time.perf_counter() > end:
                 return got
         self.done = True
         if self._extras:   # sortera in tilläggen på namn (matches är redan i namnordning)
@@ -615,6 +644,7 @@ class Watcher:
                 threading.Thread(target=self._run, args=(d, h), daemon=True).start()
 
     def _run(self, drive, handle):
+        background_thread()
         buf = ctypes.create_string_buffer(1 << 20)
         got = wintypes.DWORD()
         while not self.stopped:
@@ -635,7 +665,8 @@ class Watcher:
                 rel = data[pos + 12:pos + 12 + ln].decode("utf-16-le", "replace")
                 path = drive + "\\" + rel
                 if action in ACTIONS and not path.lower().startswith(self.ignore):
-                    self.events.put((ACTIONS[action], path))
+                    act = ACTIONS[action]
+                    self.events.put((act, path, None if act == "remove" else file_info(path)))
                 if not nxt:
                     break
                 pos += nxt
